@@ -61,11 +61,8 @@ SoundManager.prototype = {
 		this.osc[osp].connect(this.gin[osp]);
 		this.gin[osp].connect(this.allGin);
 
-		var i;
-		for(i=1; i>=0; i++)
-			if(f>440) f = f / 1.0595;
-			else break;
-		this.gin[osp].gain.value = 1 * ((50-i)/50);
+		var v = 1;
+		this.gin[osp].gain.value = v;
 		
 		this.osc[osp].start(0);
 		
@@ -142,8 +139,10 @@ function setNoteOnKey(noteOnkey, base) {
 	}
 }
 
-setNoteOnKey(noteOnkey_l, 40);
-setNoteOnKey(noteOnkey_r, 60);
+var base = 60;
+setNoteOnKey(noteOnkey_r, base);
+setNoteOnKey(noteOnkey_l, base-20);
+
 
 window.onload = function() {
 	sm = new SoundManager();
