@@ -1,8 +1,8 @@
 ///////////global//////////////////////////
-var count = 0;
-var interval = getIntervalFromFps(30);
+count = 0;
+interval = getIntervalFromFps(30);
 
-var key = 
+key = 
 { "0":48, "1":49, "2":50, "3":51, "4":52, "5":53, "6":54, "7":55, "8":56, "9":57,
 a:65, b:66, c:67, d:68, e:69, f:70, g:71, h:72, i:73, j:74, k:75,l:76, m:77,
 n:78, o:79, p:80, q:81, r:82, s:83, t:84, u:85, v:86, w:87, x:88, y:89, z:90,
@@ -17,29 +17,37 @@ var key_state =
 {"0":f, "1":f, "2":f, "3":f, "4":f, "5":f, "6":f, "7":f, "8":f, "9":f,
 a:f, b:f, c:f, d:f, e:f, f:f, g:f, h:f, i:f, j:f,k:f, l:f, m:f, n:f, o:f,p:f, q:f, r:f, s:f, t:f, u:f, v:f, w:f, x:f, y:f, z:f,
 "-":f, "^":f, "\\":f, "@":f, "[":f, ";":f, ":":f, "]":f, ",":f, ".":f, "/":f};
-var key_down =
-{"0":f, "1":f, "2":f, "3":f, "4":f, "5":f, "6":f, "7":f, "8":f, "9":f,
-a:f, b:f, c:f, d:f, e:f, f:f, g:f, h:f, i:f, j:f,k:f, l:f, m:f, n:f, o:f,p:f, q:f, r:f, s:f, t:f, u:f, v:f, w:f, x:f, y:f, z:f,
-"-":f, "^":f, "\\":f, "@":f, "[":f, ";":f, ":":f, "]":f, ",":f, ".":f, "/":f};
 
 ///////////SoundManager//////////////////////
 function SoundManager() {
 	//パラメーター
-	this.osc = new Array(16);
-	this.gin = new Array(16);
-	this.osc_state = new Array(16);
+	source_num = 32;
+	this.osc = new Array(source_num);
+	this.gin = new Array(source_num);
+	this.osc_state = new Array(source_num);
+	this.intervalid = new Array(source_num);
 	setValue(this.osc_state, "isEmpty");
+	setValue(this.intervalid, null);
+	
+	this.egParams = {
+		attack : 0,
+		decay : 0,
+		sustain : 0,
+		release : 0
+	};
 	
 	//初期化
-	if(typeof(webkitAudioContext)!=="undefined")
-    	this.audioctx = new webkitAudioContext();
-	else if(typeof(AudioContext)!=="undefined")
-    	this.audioctx = new AudioContext();
+	window.AudioContext = window.AudioContext || window.webkitAudioContext;
+    this.audioctx = new AudioContext();
+		
+	this.audioctx.createGain = this.audioctx.createGain || this.audioctx.createGainNode;
+
+	for(var osp=0; osp<source_num; osp++)
+		this.osc[osp] = this.audioctx.createOscillator();
 
 	this.allGin = this.audioctx.createGain(); //全体音量
-
 	this.comp = this.audioctx.createDynamicsCompressor();
-
+	
 	this.allGin.connect(this.comp);
 	this.comp.connect(this.audioctx.destination);
 
@@ -49,22 +57,32 @@ function SoundManager() {
 		this.gin[i] = this.audioctx.createGain(); 
 }	
 SoundManager.prototype = {
-	playSound : function(f) {
+	playSound : function(freq, type, detune) {
 		//空いている音源を検索
 		for(var osp=0; osp < this.osc.length; osp++)
-			if(this.osc_state[osp] == "isEmpty") break;
+			if(this.osc_state[osp]=="isEmpty") break;
 		if(osp >= this.osc.length) return;
 		
 		this.osc[osp] = this.audioctx.createOscillator();
-		this.osc[osp].frequency.value = f;
+
+		this.osc[osp].type = type;		
+		this.osc[osp].frequency.value = freq;
+		this.osc[osp].detune.value = detune;
 
 		this.osc[osp].connect(this.gin[osp]);
 		this.gin[osp].connect(this.allGin);
 
-		var v = 1;
-		this.gin[osp].gain.value = v;
+		var t0 = this.audioctx.currentTime;
+		var t1 = t0 + this.egParams.attack;
+		var t2 = this.egParams.decay;
+		var t2Value = this.egParams.sustain;
+
+		var v0 = 0;
 		
 		this.osc[osp].start(0);
+		this.gin[osp].gain.setValueAtTime(v0, t0);
+		this.gin[osp].gain.linearRampToValueAtTime(1, t1);
+		this.gin[osp].gain.setTargetAtTime(t2Value, t1, t2);
 		
 		this.osc_state[osp] = "isPlaying";
 		return osp;
@@ -72,12 +90,23 @@ SoundManager.prototype = {
 	stopSound : function(osp) {
 		this.osc_state[osp] = "isStopping";
 		this.osc[osp].stop  = this.osc[osp].stop  || osc[osp].noteOff;
-		this.gin[osp].gain.setTargetAtTime(0, 0, 0.01);
+		var t3 = this.audioctx.currentTime;
+		var t4 = this.egParams.release;
+		this.gin[osp].gain.cancelScheduledValues(t3);
+		this.gin[osp].gain.setValueAtTime(this.gin[osp].gain.value, t3);
+		this.gin[osp].gain.setTargetAtTime(0, t3, t4);
+		
 		var _this = this;
-		setTimeout(function(){_this.gin[osp].gain.value;}, 400);
-		setTimeout(function(){
-			_this.osc[osp].stop(0); _this.osc_state[osp]="isEmpty"; _this.gin[osp].gain.cancelScheduledValues(0);
-			}, 500);
+		this.intervalid[osp] = window.setInterval(function(){
+			var VALUE_OF_STOP = 1e-3;
+	        if (_this.gin[osp].gain.value < VALUE_OF_STOP) {
+				_this.gin[osp].gain.cancelScheduledValues(0);
+				_this.osc[osp].stop(0);
+				_this.osc_state[osp]="isEmpty";
+				window.clearInterval(_this.intervalid[osp]);
+				_this.intervalid[osp] = null;
+	        }
+			},0);
 	}
 };
 
@@ -85,6 +114,8 @@ SoundManager.prototype = {
 function Instrumental(sm) {
 	this.note_osp = Array(120);
 	this.note_state = new Array(120);
+	this.type = "sin";
+	this.detune = 0;
 	setValue(this.note_osp, -1);
 	setValue(this.note_state, false);
 	SM = sm;
@@ -94,7 +125,7 @@ Instrumental.prototype = {
 	playNote : function(note) {
 		if(this.note_state[note] == false) {
 			this.note_state[note] = true;
-			var osp = SM.playSound(this.noteToFreq(note));
+			var osp = SM.playSound(this.noteToFreq(note), this.type, this.detune);
 			this.note_osp[note] = osp;
 		}
 	},
@@ -143,26 +174,67 @@ var base = 60;
 setNoteOnKey(noteOnkey_r, base);
 setNoteOnKey(noteOnkey_l, base-20);
 
+//objを指定できる場合のみ有効
+function setValueAsNumToObj(obj, id){
+	var ele = document.getElementById(id);
+	obj = ele.value;
+	ele.addEventListener("change", function() {
+	  obj = this.valueAsNumber;
+	  console.log(obj);
+	}, false);
+}
 
 window.onload = function() {
 	sm = new SoundManager();
 	inst = new Instrumental(sm);
+	
 	var volume = document.getElementById("volume");
-	sm.allGin.gain.value = volume.value / 100;
+	sm.allGin.gain.value = volume.value;
 	volume.addEventListener("change", function() {
-	  sm.allGin.gain.value = volume.value / 100;
+	  sm.allGin.gain.value = this.value;
 	}, false);
-	main();
+	
+	var detune = document.getElementById("detune");
+	inst.detune = detune.valueAsNumber;
+	detune.addEventListener("change", function() {
+	  inst.detune = this.valueAsNumber;
+	}, false);
+	
+	var attack = document.getElementById("attack");
+	sm.egParams.attack = attack.valueAsNumber;
+	attack.addEventListener("change", function() {
+	  sm.egParams.attack = this.valueAsNumber;
+	}, false);
+	
+	var decay = document.getElementById("decay");
+	sm.egParams.decay = decay.valueAsNumber;
+	decay.addEventListener("change", function() {
+	  sm.egParams.decay = this.valueAsNumber;
+	}, false);
+	
+	var sustain = document.getElementById("sustain");
+	sm.egParams.sustain = sustain.valueAsNumber;
+	sustain.addEventListener("change", function() {
+	  sm.egParams.sustain = this.valueAsNumber;
+	}, false);
+	
+	var release = document.getElementById("release");
+	sm.egParams.release = release.valueAsNumber;
+	release.addEventListener("change", function() {
+	  sm.egParams.release = this.valueAsNumber;
+	}, false);
+	
+	var radioList = document.getElementsByName("wave");
+    for(var i=0; i<radioList.length; i++) {
+        radioList[i].addEventListener("click",function(){
+            inst.type = this.value;
+        },false);
+    }
+	
+	setInterval("main()", interval);
 }
 
 function main(){
-	//キーを押した瞬間の変数更新
-	for(k in key_state)
-		if(key_state[k]==true && tmp_key_state[k]==false)
-			key_down[k] = true;
-		else 
-			key_down[k] = false;
-			
 	//カウント更新	
 	if(count++ >= 60) count = 0;
 	
@@ -173,22 +245,19 @@ function main(){
 		keyNoteStr_r += "  ";
 	keyNoteStr_r += "" + noteKeyControl(noteOnkey_r, key_r);
 	
-	//sm.main();
-	
 	//画面の描画a
 	draw();
 	
 	//キー情報退避
 	for(var k in key_state)
 		tmp_key_state[k] = key_state[k];
-	setTimeout("main()", interval);
 }
 
-function noteKeyControl(noteOnkey, key) {
+function noteKeyControl(noteOnkey, key, type) {
 	var keyNoteStr = "";
 	for(var k=0; k<noteOnkey.length; k++)
 		if(key_state[key[k]]==true) {
-			inst.playNote(noteOnkey[k]);
+			inst.playNote(noteOnkey[k], type);
 			keyNoteStr += getStringFromNote(noteOnkey[k]) + " ";
 		} else if(key_state[key[k]]==false)
 			inst.stopNote(noteOnkey[k]);
@@ -254,11 +323,6 @@ function draw() {
 	var x = px-30;
 	ctx.beginPath();
 	for(var k in inst.note_state) {
-		/*var x = px;
-		if(inst.note_state[k-1]==true)
-			if(tmp_x <= px)
-				x += 10;
-		tmp_x = x;*/
 		if(inst.note_state[k] == true) {
 			x += 30;
 			shp=false;
@@ -329,6 +393,7 @@ document.onkeydown = function (e){
 }
 
 document.onkeyup =  function (e) {
+	e.which = e.keyCode || e.which;
 	var k_code = e.which;
 	for(k in key)
 	if(k_code == key[k] && key_state[k] == true) {
